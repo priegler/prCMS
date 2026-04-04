@@ -1,0 +1,14 @@
+{
+  "name": "inlinecms",
+  "private": true,
+  "description": "Zero-config inline editing for Next.js",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "dev": "pnpm --filter demo dev",
+    "clean": "pnpm -r clean"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

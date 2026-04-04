@@ -1,0 +1,10 @@
+{
+  "app/page.tsx::Home>main>h1#children": "Welcome to InlineCMS",
+  "app/page.tsx::Home>main>p#children": "This is a demo page for testing the inline CMS editing experience.",
+  "app/page.tsx::Home>main>section>h2#children": "Features",
+  "app/page.tsx::Home>main>section>p#children": "Edit any text directly on the page. Changes are saved to content.json.",
+  "app/page.tsx::Home>main>section[1]>h2#children": "Getting Started",
+  "app/page.tsx::Home>main>section[1]>p#children": "Add ?cms=edit to the URL to activate the editor overlay.",
+  "app/page.tsx::Home>main>section[1]>p[1]#children": "Or press Ctrl+Shift+E to toggle edit mode.",
+  "app/page.tsx::Home>main>section[2]>img#alt": "A placeholder image for testing"
+}
