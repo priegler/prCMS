@@ -1,0 +1,49 @@
+{
+  "name": "@inlinecms/babel-plugin",
+  "version": "0.1.0",
+  "description": "Babel plugin for inline CMS string extraction and JSX rewriting",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./next": {
+      "types": "./dist/next.d.ts",
+      "import": "./dist/next.js"
+    }
+  },
+  "bin": {
+    "inlinecms": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "@babel/core": "^7.0.0"
+  },
+  "dependencies": {
+    "@babel/generator": "^7.26.0",
+    "@babel/parser": "^7.26.0",
+    "@babel/traverse": "^7.26.0",
+    "@babel/types": "^7.26.0",
+    "glob": "^11.0.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0",
+    "@types/babel__core": "^7.20.5",
+    "@types/babel__traverse": "^7.20.0",
+    "@types/node": "^25.5.2",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "files": [
+    "dist"
+  ]
+}
