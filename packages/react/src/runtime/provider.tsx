@@ -2,6 +2,7 @@
 
 import React, { createContext, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ContentMap } from '@inlinecms/babel-plugin';
+import { __updateClientCmsStore } from './clientCms.js';
 
 const EditorOverlay = lazy(() => import('../editor/EditorOverlay.js').then(m => ({ default: m.EditorOverlay })));
 
@@ -98,6 +99,11 @@ export function InlineCMSProvider({ children, defaultLocale = 'en', locales = ['
       console.error('Failed to save CMS changes:', await res.text());
     }
   }, [dirtyKeys, locale]);
+
+  // Sync the module-level store so getCms() (non-hook) can read current values.
+  // This runs on every render, keeping the plain-function accessor in sync
+  // with the React state without requiring hooks at the call site.
+  __updateClientCmsStore(content, dirtyKeys);
 
   const value = useMemo<CMSContextValue>(
     () => ({

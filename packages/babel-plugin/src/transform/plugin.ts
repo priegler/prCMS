@@ -95,8 +95,8 @@ export function inlineCMSBabelPlugin(
 
       // Extract and optionally rewrite JSX text children
       JSXText(path: BabelNodePath<BabelTypes.JSXText>, state: PluginState) {
-        const text = path.node.value.trim();
-        if (!text || /^\s*$/.test(text)) return;
+        const text = normalizeJSXWhitespace(path.node.value);
+        if (!text) return;
 
         const elementPath = getJSXElementPath(path, t);
         if (!elementPath) return;
@@ -291,7 +291,12 @@ function buildManifestEntry(
 }
 
 /**
- * Build a cms("key", "fallback") or __useCms("key", "fallback") call expression.
+ * Build a cms("key", "fallback") or __getCms("key", "fallback") call expression.
+ *
+ * For server components: cms() is a plain function — safe anywhere.
+ * For client components: getCms() is a plain function (NOT a hook) that reads
+ * from a module-level store populated by the provider. This avoids React
+ * hook-order violations when the call site is inside conditionals or iterators.
  */
 function buildCmsCall(
   t: typeof BabelTypes,
@@ -299,7 +304,7 @@ function buildCmsCall(
   fallback: string,
   isClientComponent: boolean,
 ): BabelTypes.CallExpression {
-  const fnName = isClientComponent ? '__inlinecms_useCms' : '__inlinecms_cms';
+  const fnName = isClientComponent ? '__inlinecms_getCms' : '__inlinecms_cms';
   return t.callExpression(
     t.identifier(fnName),
     [t.stringLiteral(key), t.stringLiteral(fallback)],
@@ -325,10 +330,11 @@ function injectCmsImport(path: any, t: typeof BabelTypes, state: PluginState): v
   const specifiers: BabelTypes.ImportSpecifier[] = [];
 
   if (state.isClientComponent) {
+    // getCms is a plain function, not a hook — safe in conditionals/iterators
     specifiers.push(
       t.importSpecifier(
-        t.identifier('__inlinecms_useCms'),
-        t.identifier('useCms'),
+        t.identifier('__inlinecms_getCms'),
+        t.identifier('getCms'),
       ),
     );
   } else {
@@ -342,6 +348,37 @@ function injectCmsImport(path: any, t: typeof BabelTypes, state: PluginState): v
 
   const importDecl = t.importDeclaration(specifiers, t.stringLiteral('@inlinecms/react'));
   program.node.body.unshift(importDecl);
+}
+
+/**
+ * Normalize JSX whitespace the same way React does:
+ * - Collapse runs of whitespace (including newlines) into a single space
+ * - But preserve the resulting string if it contains non-whitespace chars
+ * - Return empty string if the result is only whitespace
+ *
+ * This avoids the original `trim()` which dropped meaningful boundary spaces
+ * (e.g. text between <strong> and surrounding words).
+ */
+function normalizeJSXWhitespace(raw: string): string {
+  // React's JSX whitespace rules:
+  // 1. Lines that are only whitespace are removed
+  // 2. Leading/trailing whitespace on each line is trimmed
+  // 3. Newlines become spaces
+  // 4. Multiple spaces collapse to one
+  const lines = raw.split('\n');
+  const processedLines: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    // Trim leading whitespace from all lines except the first
+    if (i > 0) line = line.replace(/^\s+/, '');
+    // Trim trailing whitespace from all lines except the last
+    if (i < lines.length - 1) line = line.replace(/\s+$/, '');
+    if (line) processedLines.push(line);
+  }
+
+  const result = processedLines.join(' ');
+  return result.trim() || '';
 }
 
 /**

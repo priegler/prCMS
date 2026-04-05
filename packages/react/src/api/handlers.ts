@@ -1,4 +1,5 @@
 import { readContentFile, writeContentFile, mergeContent } from '@inlinecms/babel-plugin';
+import { invalidateContentCache } from '../runtime/cms.js';
 
 /**
  * Next.js App Router GET handler for CMS API.
@@ -98,6 +99,9 @@ async function handleSave(request: Request): Promise<Response> {
   const existing = readContentFile(contentDir, locale);
   const merged = mergeContent(existing, changes);
   writeContentFile(contentDir, locale, merged);
+
+  // Clear server-side content cache so subsequent renders pick up the new values
+  invalidateContentCache();
 
   return Response.json({ content: merged, locale });
 }

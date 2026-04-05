@@ -85,14 +85,16 @@ function Home() {
     expect(output).not.toContain('__inlinecms_cms');
   });
 
-  it('uses useCms for client components', () => {
+  it('uses getCms (non-hook) for client components', () => {
     const input = `'use client';
 function Counter() {
   return <p>Click me</p>;
 }`;
     const output = transform(input);
-    expect(output).toContain('__inlinecms_useCms');
-    expect(output).not.toContain('{ cms }');
+    expect(output).toContain('__inlinecms_getCms');
+    // Should NOT use hook-based useCms — getCms is a plain function
+    expect(output).not.toContain('useCms');
+    expect(output).not.toContain('__inlinecms_cms(');
   });
 
   it('injects import statement', () => {
