@@ -4,6 +4,7 @@
   "description": "Zero-config inline editing for Next.js",
   "scripts": {
     "build": "pnpm -r build",
+    "postinstall": "pnpm build",
     "test": "pnpm -r test",
     "dev": "pnpm --filter demo dev",
     "clean": "pnpm -r clean"
