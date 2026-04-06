@@ -19,6 +19,8 @@ export interface PluginState {
   isClientComponent: boolean;
   /** Whether the cms import has been injected */
   importInjected: boolean;
+  /** Set of component function nodes that already have useContentVersion() injected */
+  instrumentedComponents: WeakSet<BabelTypes.Node>;
 }
 
 interface PluginOptions {
@@ -70,6 +72,7 @@ export function inlineCMSBabelPlugin(
       this.hasContent = false;
       this.isClientComponent = false;
       this.importInjected = false;
+      this.instrumentedComponents = new WeakSet();
     },
 
     visitor: {
@@ -111,6 +114,7 @@ export function inlineCMSBabelPlugin(
 
         if (!extractOnly) {
           injectCmsImport(path, t, state);
+          injectUseContentVersion(path, t, state);
 
           // Add data-cms attribute to parent element
           const parent = path.parentPath;
@@ -153,6 +157,7 @@ export function inlineCMSBabelPlugin(
 
         if (!extractOnly) {
           injectCmsImport(path, t, state);
+          injectUseContentVersion(path, t, state);
 
           // Add data-cms attribute to the parent element
           const attrParent = path.parentPath;
@@ -330,11 +335,19 @@ function injectCmsImport(path: any, t: typeof BabelTypes, state: PluginState): v
   const specifiers: BabelTypes.ImportSpecifier[] = [];
 
   if (state.isClientComponent) {
-    // getCms is a plain function, not a hook — safe in conditionals/iterators
+    // getCms is a plain function — safe in conditionals/iterators
     specifiers.push(
       t.importSpecifier(
         t.identifier('__inlinecms_getCms'),
         t.identifier('getCms'),
+      ),
+    );
+    // useContentVersion subscribes the component to store changes
+    // so getCms() picks up new values after save/fetch
+    specifiers.push(
+      t.importSpecifier(
+        t.identifier('__inlinecms_useContentVersion'),
+        t.identifier('useContentVersion'),
       ),
     );
   } else {
@@ -379,6 +392,50 @@ function normalizeJSXWhitespace(raw: string): string {
 
   const result = processedLines.join(' ');
   return result.trim() || '';
+}
+
+/**
+ * Inject __inlinecms_useContentVersion() call at the top of a client component's
+ * function body so that getCms() reads trigger re-renders.
+ * Only injects once per component function.
+ */
+function injectUseContentVersion(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  path: any,
+  t: typeof BabelTypes,
+  state: PluginState,
+): void {
+  if (!state.isClientComponent) return;
+
+  // Walk up to find the enclosing function
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let current: any = path.parentPath;
+  while (current) {
+    if (
+      current.isFunctionDeclaration?.() ||
+      current.isFunctionExpression?.() ||
+      current.isArrowFunctionExpression?.()
+    ) {
+      break;
+    }
+    current = current.parentPath;
+  }
+  if (!current) return;
+
+  const funcNode = current.node;
+  if (state.instrumentedComponents.has(funcNode)) return;
+  state.instrumentedComponents.add(funcNode);
+
+  // Build: __inlinecms_useContentVersion();
+  const callStmt = t.expressionStatement(
+    t.callExpression(t.identifier('__inlinecms_useContentVersion'), []),
+  );
+
+  // Insert at the top of the function body
+  const body = funcNode.body;
+  if (t.isBlockStatement(body)) {
+    body.body.unshift(callStmt);
+  }
 }
 
 /**

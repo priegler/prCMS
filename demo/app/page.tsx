@@ -1,3 +1,5 @@
+'use client';
+
 export default function Home() {
   return (
     <main style={{ maxWidth: 800, margin: '0 auto', padding: '2rem' }}>
