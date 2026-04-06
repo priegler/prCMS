@@ -5,7 +5,7 @@ import type { ContentMap } from '@inlinecms/babel-plugin';
 import { __updateClientCmsStore } from './clientCms.js';
 
 const EditorOverlay = lazy(() => import('../editor/EditorOverlay.js').then(m => ({ default: m.EditorOverlay })));
-const LoginDialog = lazy(() => import('../editor/LoginDialog.js').then(m => ({ default: m.LoginDialog })));
+import { LoginDialog } from '../editor/LoginDialog.js';
 
 interface CMSContextValue {
   /** Current content map for the active locale */
@@ -70,10 +70,10 @@ export function InlineCMSProvider({ children, defaultLocale = 'en', locales = ['
     }
   }, [requestEditMode]);
 
-  // Keyboard shortcut: Ctrl+Shift+E to toggle edit mode
+  // Keyboard shortcut: Ctrl+Shift+E (or Cmd+Shift+E on Mac) to toggle edit mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key === 'E') {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'E') {
         e.preventDefault();
         if (isEditing) {
           setEditing(false);
@@ -149,9 +149,7 @@ export function InlineCMSProvider({ children, defaultLocale = 'en', locales = ['
         </Suspense>
       )}
       {showLogin && (
-        <Suspense fallback={null}>
-          <LoginDialog onSuccess={handleLoginSuccess} onCancel={handleLoginCancel} />
-        </Suspense>
+        <LoginDialog onSuccess={handleLoginSuccess} onCancel={handleLoginCancel} />
       )}
     </CMSContext.Provider>
   );
