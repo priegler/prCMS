@@ -186,7 +186,7 @@ const buttonStyle: React.CSSProperties = {
 const primaryButtonStyle: React.CSSProperties = {
   ...buttonStyle,
   background: '#3b82f6',
-  borderColor: '#3b82f6',
+  border: '1px solid #3b82f6',
   color: 'white',
 };
 
