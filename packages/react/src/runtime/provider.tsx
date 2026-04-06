@@ -5,6 +5,7 @@ import type { ContentMap } from '@inlinecms/babel-plugin';
 import { __updateClientCmsStore } from './clientCms.js';
 
 const EditorOverlay = lazy(() => import('../editor/EditorOverlay.js').then(m => ({ default: m.EditorOverlay })));
+const LoginDialog = lazy(() => import('../editor/LoginDialog.js').then(m => ({ default: m.LoginDialog })));
 
 interface CMSContextValue {
   /** Current content map for the active locale */
@@ -44,34 +45,54 @@ export function InlineCMSProvider({ children, defaultLocale = 'en', locales = ['
   const [locale, setLocale] = useState(defaultLocale);
   const [isEditing, setEditing] = useState(false);
   const [dirtyKeys, setDirtyKeys] = useState<ContentMap>({});
+  const [showLogin, setShowLogin] = useState(false);
 
   // Fetch content for the active locale
   useEffect(() => {
     fetchContent(locale).then(setContent).catch(console.error);
   }, [locale]);
 
-  // Check auth status and activate editing if appropriate
+  // Attempt to enter edit mode: check auth first, show login if needed
+  const requestEditMode = useCallback(async () => {
+    const authed = await checkAuth();
+    if (authed) {
+      setEditing(true);
+    } else {
+      setShowLogin(true);
+    }
+  }, []);
+
+  // Check for ?cms=edit on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('cms') === 'edit') {
-      checkAuth().then((authed) => {
-        if (authed) setEditing(true);
-      });
+      requestEditMode();
     }
-  }, []);
+  }, [requestEditMode]);
 
   // Keyboard shortcut: Ctrl+Shift+E to toggle edit mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.key === 'E') {
         e.preventDefault();
-        checkAuth().then((authed) => {
-          if (authed) setEditing((prev) => !prev);
-        });
+        if (isEditing) {
+          setEditing(false);
+        } else {
+          requestEditMode();
+        }
       }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isEditing, requestEditMode]);
+
+  const handleLoginSuccess = useCallback(() => {
+    setShowLogin(false);
+    setEditing(true);
+  }, []);
+
+  const handleLoginCancel = useCallback(() => {
+    setShowLogin(false);
   }, []);
 
   const setDirty = useCallback((key: string, value: string) => {
@@ -101,8 +122,6 @@ export function InlineCMSProvider({ children, defaultLocale = 'en', locales = ['
   }, [dirtyKeys, locale]);
 
   // Sync the module-level store so getCms() (non-hook) can read current values.
-  // This runs on every render, keeping the plain-function accessor in sync
-  // with the React state without requiring hooks at the call site.
   __updateClientCmsStore(content, dirtyKeys);
 
   const value = useMemo<CMSContextValue>(
@@ -127,6 +146,11 @@ export function InlineCMSProvider({ children, defaultLocale = 'en', locales = ['
       {isEditing && (
         <Suspense fallback={null}>
           <EditorOverlay />
+        </Suspense>
+      )}
+      {showLogin && (
+        <Suspense fallback={null}>
+          <LoginDialog onSuccess={handleLoginSuccess} onCancel={handleLoginCancel} />
         </Suspense>
       )}
     </CMSContext.Provider>
