@@ -1,12 +1,13 @@
 import type { InlineCMSConfig } from './core/config.js';
 import { DEFAULT_CONFIG } from './core/config.js';
+import { inlineCMSBabelPlugin } from './transform/plugin.js';
 
 /**
  * Next.js config wrapper that registers the inline CMS Babel plugin.
  *
- * Usage in next.config.js:
- *   const withInlineCMS = require('@inlinecms/babel-plugin/next').default;
- *   module.exports = withInlineCMS({ ... });
+ * Usage in next.config.mjs:
+ *   import withInlineCMS from '@inlinecms/babel-plugin/next';
+ *   export default withInlineCMS({ ... });
  */
 export default function withInlineCMS(
   nextConfig: Record<string, unknown> = {},
@@ -22,6 +23,8 @@ export default function withInlineCMS(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       options: any,
     ) {
+      const projectRoot = options.dir ?? process.cwd();
+
       // Add the inline CMS Babel plugin to the webpack Babel loader
       config.module.rules.push({
         test: /\.(tsx|jsx)$/,
@@ -32,16 +35,20 @@ export default function withInlineCMS(
             options: {
               plugins: [
                 [
-                  require.resolve('./transform/plugin.js'),
+                  // Pass the plugin function directly — no require.resolve needed
+                  inlineCMSBabelPlugin,
                   {
                     config: resolvedConfig,
-                    projectRoot: options.dir ?? process.cwd(),
+                    projectRoot,
                     extractOnly: false,
                   },
                 ],
               ],
-              // Don't let Babel process things it shouldn't —
-              // Next.js already handles TS/JSX via SWC
+              // Syntax-only parsing — don't transform JSX/TS,
+              // Next.js SWC handles that after our plugin runs
+              parserOpts: {
+                plugins: ['jsx', 'typescript'],
+              },
               presets: [],
             },
           },
