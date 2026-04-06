@@ -97,6 +97,25 @@ function Counter() {
     expect(output).not.toContain('__inlinecms_cms(');
   });
 
+  it('injects useContentVersion() call in client component body', () => {
+    const input = `'use client';
+function Counter() {
+  return <p>Click me</p>;
+}`;
+    const output = transform(input);
+    expect(output).toContain('__inlinecms_useContentVersion()');
+    expect(output).toContain('import { getCms as __inlinecms_getCms, useContentVersion as __inlinecms_useContentVersion }');
+  });
+
+  it('does not inject useContentVersion() in server components', () => {
+    const input = `
+function Home() {
+  return <h1>Hello World</h1>;
+}`;
+    const output = transform(input);
+    expect(output).not.toContain('useContentVersion');
+  });
+
   it('injects import statement', () => {
     const input = `
 function Home() {

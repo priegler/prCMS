@@ -116,13 +116,31 @@ async function handleCommit(request: Request): Promise<Response> {
 
   try {
     const { execSync } = await import('child_process');
-    const contentDir = process.env.INLINECMS_CONTENT_DIR ?? './content';
+    const { resolve } = await import('path');
+    const contentDir = resolve(process.cwd(), process.env.INLINECMS_CONTENT_DIR ?? './content');
+    const cwd = process.cwd();
 
-    execSync(`git add ${contentDir}`, { stdio: 'pipe' });
-    execSync('git commit -m "CMS content update"', { stdio: 'pipe' });
-    execSync('git push', { stdio: 'pipe' });
+    execSync(`git add "${contentDir}"`, { stdio: 'pipe', cwd });
 
-    return Response.json({ committed: true });
+    // Check if there are staged changes before committing
+    try {
+      execSync('git diff --cached --quiet', { stdio: 'pipe', cwd });
+      // If the above succeeds, there are no staged changes
+      return Response.json({ committed: false, message: 'No changes to commit' });
+    } catch {
+      // Non-zero exit means there ARE staged changes — proceed with commit
+    }
+
+    execSync('git commit -m "CMS content update"', { stdio: 'pipe', cwd });
+
+    // Push is optional — don't fail the whole operation if push fails
+    try {
+      execSync('git push', { stdio: 'pipe', cwd, timeout: 15000 });
+    } catch {
+      return Response.json({ committed: true, pushed: false, message: 'Committed but push failed' });
+    }
+
+    return Response.json({ committed: true, pushed: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Git operation failed';
     return new Response(JSON.stringify({ error: message }), {
