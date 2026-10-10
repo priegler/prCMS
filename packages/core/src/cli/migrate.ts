@@ -78,7 +78,11 @@ export async function migrate(root: string, config: InlineCMSConfig, contentPath
         }
         if (t.isFunction(current)) {
           if ((t.isFunctionDeclaration(current) || t.isFunctionExpression(current)) && current.id) component = current.id.name;
-          else { const parent = parents.get(current); if (t.isVariableDeclarator(parent) && t.isIdentifier(parent.id)) component = parent.id.name; }
+          else {
+            const parent = parents.get(current);
+            if (t.isVariableDeclarator(parent) && t.isIdentifier(parent.id)) component = parent.id.name;
+            else if (t.isExportDefaultDeclaration(parent)) component = 'Default';
+          }
           break;
         }
         current = parents.get(current);

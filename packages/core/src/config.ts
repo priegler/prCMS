@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import picomatch from 'picomatch';
 
@@ -23,8 +24,12 @@ export async function loadConfig(root = process.cwd()): Promise<InlineCMSConfig>
   for (const name of ['inlinecms.config.mjs', 'inlinecms.config.js', 'inlinecms.config.ts']) {
     const path = resolve(root, name);
     if (existsSync(path)) {
-      const runtimeRequire = createRequire(resolve(root, 'package.json'));
-      const imported = runtimeRequire(path);
+      // Preserve registered TypeScript require hooks; JS/MJS use native ESM loading.
+      const loaded = name.endsWith('.ts')
+        ? createRequire(resolve(root, 'package.json'))(path)
+        : await import(/* webpackIgnore: true */ pathToFileURL(path).href);
+      // Native import wraps CommonJS module.exports, which can itself contain exports.default.
+      const imported = name.endsWith('.ts') ? loaded : loaded.default ?? loaded;
       return configWith(imported.default ?? imported);
     }
   }

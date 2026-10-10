@@ -7,6 +7,26 @@ import { configWith } from '../config.js';
 import { scoreEditability } from '../cli/doctor.js';
 import { FsSink } from '../sinks/fs.js';
 describe('readiness CLI', () => {
+  it.each([
+    'export default function () { return <main><p title="Original title">Original</p></main>; }',
+    'export default () => <main><p title="Original title">Original</p></main>;',
+  ])('migrates Default keys for anonymous default exports: %s', async source => {
+    const root = await mkdtemp(join(tmpdir(), 'cms-default-migrate-'));
+    try {
+      await mkdir(join(root, 'app')); await mkdir(join(root, 'content'));
+      await writeFile(join(root, 'app/page.tsx'), source);
+      await writeFile(join(root, 'content/content.en.json'), JSON.stringify({
+        'app/page.tsx::Default>main>p#children': 'Saved copy',
+        'app/page.tsx::Default>main>p#title': 'Saved title',
+      }));
+      const preview = await migrate(root, configWith(), 'content/content.en.json');
+      expect(preview.unmatched).toEqual([]);
+      expect(await readFile(join(root, 'app/page.tsx'), 'utf8')).toBe(source);
+      await migrate(root, configWith(), 'content/content.en.json', true);
+      expect(await readFile(join(root, 'app/page.tsx'), 'utf8')).toBe(source.replace('Original title', 'Saved title').replace('Original', 'Saved copy'));
+      await expect(access(join(root, 'content/content.en.json'))).rejects.toThrow();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('migrates both build-time and hand-wired overrides, removing v1 calls', async () => {
     const root = await mkdtemp(join(tmpdir(), 'cms-migrate-'));
     try {
