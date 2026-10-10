@@ -1,235 +1,112 @@
-# InlineCMS
+# InlineCMS v2
 
-Zero-config inline editing for Next.js. Edit any text on your site directly in the browser — no admin panel, no external CMS. Changes are stored in JSON content files and optionally committed to Git.
+Click text in a development or preview site, preview its source diff, and publish it to the file that produced it. Source code is the only content store. Normal production builds add no locators and the API returns 404.
 
-## How It Works
+Requires Node 20.19+ and React 18+. Next.js 15/16 is the first integration; Vite and Astro use the same source-first core.
 
-```
-Source (.tsx)  ──>  Babel Plugin  ──>  content.json + rewritten JSX
-                                            │
-                                            ▼
-                               Browser (editor overlay)
-                                            │
-                                            ▼
-                               API route  ──>  Git commit
+## Local Next.js setup
+
+```sh
+pnpm add @inlinecms/core @inlinecms/react @inlinecms/transform
 ```
 
-1. **Build time:** A Babel plugin extracts static strings from your JSX and rewrites them to read from `content.json` via a `cms()` runtime function.
-2. **Browser:** When an admin activates edit mode, a floating editor overlay lets them click any text to edit it inline.
-3. **Save:** Changes are POSTed to an API route that writes `content.json` to disk and optionally commits to Git.
-
-## Quick Start
-
-### Install
-
-```bash
-npm install @inlinecms/react @inlinecms/babel-plugin
+```js
+// next.config.mjs
+import withInlineCMS from '@inlinecms/transform/next';
+export default withInlineCMS({});
 ```
-
-### 1. Wrap your layout with the provider
 
 ```tsx
-// app/layout.tsx
-import { InlineCMSProvider } from '@inlinecms/react';
-
-export default function Layout({ children }) {
-  return (
-    <html>
-      <body>
-        <InlineCMSProvider defaultLocale="en" locales={['en', 'de']}>
-          {children}
-        </InlineCMSProvider>
-      </body>
-    </html>
-  );
+// app/layout.tsx — server component
+import { InlineCMS } from '@inlinecms/react/server';
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return <html lang="en"><body><InlineCMS>{children}</InlineCMS></body></html>;
 }
 ```
-
-### 2. Mount the API route
 
 ```ts
 // app/api/cms/[...action]/route.ts
 export { GET, POST } from '@inlinecms/react/api';
+export const runtime = 'nodejs';
 ```
 
-### 3. Register the Babel plugin (optional — for automatic JSX rewriting)
+Set `INLINE_CMS_SECRET` to a strong local login secret in `.env.local`. Development generates a private signing key for this server process; restarting invalidates sessions and proposals. Set a separate server-only `INLINECMS_SESSION_SECRET` for persistent sessions or any edit deployment. It must differ from the login password. Start `next dev` and open `/?cms=edit`, or press Ctrl/Cmd+Shift+E. Both webpack and Turbopack are supported; the wrapper preserves existing configuration and uses the older `experimental.turbo` key for Next 15.0–15.2.
 
-```js
-// next.config.js
-const withInlineCMS = require('@inlinecms/babel-plugin/next').default;
-module.exports = withInlineCMS({ /* your next config */ });
-```
-
-### 4. Set the auth secret
-
-```bash
-# .env.local
-INLINE_CMS_SECRET=your-secret-here
-```
-
-That's it. Open your site with `?cms=edit` in the URL to activate the editor.
-
-## Packages
-
-This is a monorepo with two packages:
-
-| Package | Description |
-|---------|-------------|
-| `@inlinecms/babel-plugin` | Babel transform for string extraction and JSX rewriting, plus core types, key generation, content I/O, and CLI |
-| `@inlinecms/react` | React runtime (`cms()`, `getCms()`, `useCms()`), editor overlay, toolbar, language switcher, and API route handlers |
-
-## Architecture
-
-### Content Keys
-
-Every extractable string gets a structural key based on its position in the component tree:
-
-```
-app/page.tsx::Home>main>h1#children
-app/page.tsx::Home>main>img#alt
-```
-
-Format: `filePath::ComponentName>tag>tag#attribute`
-
-Keys are stable across line number changes. Sibling disambiguation uses indices (`p[1]`, `p[2]`).
-
-### Runtime Functions
-
-| Function | Context | How it works |
-|----------|---------|-------------|
-| `cms(key, fallback)` | Server Components (RSC) | Reads `content.{locale}.json` from disk at request time |
-| `getCms(key, fallback)` | Client Components | Plain function reading from a module-level store synced by the provider. Safe in conditionals, loops, `.map()` |
-| `useCms(key, fallback)` | Client Components | React hook variant (reads from context). Use directly if you prefer hooks at the component top level |
-
-### JSX Rewriting
-
-The Babel plugin transforms this:
-
-```tsx
-export default function Home() {
-  return <h1>Welcome to my site</h1>;
-}
-```
-
-Into this (at compile time, source files untouched):
-
-```tsx
-import { cms as __inlinecms_cms } from "@inlinecms/react";
-
-export default function Home() {
-  return (
-    <h1 data-cms="app/page.tsx::Home>h1#children">
-      {__inlinecms_cms("app/page.tsx::Home>h1#children", "Welcome to my site")}
-    </h1>
-  );
-}
-```
-
-For client components (`'use client'`), it emits `getCms()` instead of `cms()` to avoid React hook-order violations.
-
-### Editor Overlay
-
-When edit mode is active:
-- **Hover** any element with `[data-cms]` to see a blue highlight
-- **Click** to enable inline editing via `contentEditable`
-- **Escape** to discard changes to the active element
-- **Toolbar** at the bottom: Save, Discard, Commit to Git, Language Switcher
-
-Activation methods:
-- `?cms=edit` query parameter
-- `Ctrl+Shift+E` keyboard shortcut
-
-The editor overlay is lazy-loaded and tree-shaken in production — zero overhead when not active.
-
-### API Routes
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/cms/auth` | POST | Validate `INLINE_CMS_SECRET`, set httpOnly auth cookie |
-| `/api/cms/auth` | GET | Check if current session is authenticated |
-| `/api/cms/content?locale=en` | GET | Return full content map for a locale |
-| `/api/cms/save` | POST | Merge changes into `content.{locale}.json` |
-| `/api/cms/commit` | POST | `git add` + `git commit` + `git push` the content directory |
-
-### i18n
-
-Content is stored per locale: `content/content.en.json`, `content/content.de.json`, etc.
-
-Fallback chain: **requested locale** -> **default locale** -> **hardcoded fallback** (from source)
-
-The editor toolbar includes a language switcher when multiple locales are configured.
+Select an element, edit its leaf text inline, then click outside to preview. Mixed content offers individual text fragments. Attributes, image uploads, candidate selection and Ask AI are available in the element panel. The pending panel shows diffs and lets you revert each change. Publish writes the source; HMR refreshes the page. An optional local commit never pushes.
 
 ## Configuration
 
-Create `inlinecms.config.ts` at your project root (optional — sensible defaults are used otherwise):
-
-```ts
+```js
+// inlinecms.config.mjs — loaded by Node, never sent to the browser
 export default {
-  include: ['app/**/*.tsx', 'components/**/*.tsx'],
-  exclude: ['**/node_modules/**', '**/*.test.*'],
-  defaultLocale: 'en',
-  locales: ['en', 'de'],
-  contentDir: './content',
-  attributes: ['alt', 'title', 'placeholder', 'aria-label'],
+  include: ['app/**/*.{tsx,jsx,ts,js}', 'components/**/*.{tsx,jsx}', 'content/**/*.{ts,json}', 'messages/**/*.json'],
+  exclude: ['**/node_modules/**', '**/*.test.*', '**/api/**'],
+  attributes: ['alt', 'title', 'placeholder', 'aria-label', 'src'],
+  importAliases: { '@/': './', '~/': './src/' },
+  routes: ['/', '/about'],
+  localCommit: false,
+  agentModel: 'claude-opus-5-5',
 };
 ```
 
-### Environment Variables
+Pass the same include/exclude overrides to `withInlineCMS({}, config)` if you customize the transform scope. Use synchronous JS/MJS configuration on Node versions without TypeScript stripping. Paths are project-relative; absolute paths, traversal, dot directories and symlinked source paths are rejected. Exclude server-only code from editing.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `INLINE_CMS_SECRET` | Yes (for editing) | Secret for admin authentication |
-| `INLINECMS_CONTENT_DIR` | No | Override content directory (default: `./content`) |
-| `INLINECMS_DEFAULT_LOCALE` | No | Override default locale (default: `en`) |
+The resolver first tries the clicked element, then the file, imports up to two levels deep, and the configured source corpus. Duplicate copy produces a candidate picker. Use an optional `locale` on API edit requests when several active-locale message files contain the same string; locale selection belongs to your site. Text searches exclude unrelated JSX attributes, and attribute searches stay within the requested attribute. Computed attributes and dynamic, concatenated or computed copy can be handed to an agent.
 
-## CLI
+## Vite and Astro
 
-The `@inlinecms/babel-plugin` package includes a CLI for offline content management:
-
-```bash
-# Extract strings from JSX into content.json (without build-time rewriting)
-npx inlinecms extract
-
-# Audit for orphaned keys, missing translations, and content drift
-npx inlinecms audit
-
-# Specify a custom project root
-npx inlinecms extract --root ./my-app
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import inlineCMS from '@inlinecms/transform/vite';
+export default defineConfig({ plugins: [inlineCMS(), react()] });
 ```
 
-## Project Structure
+The unplugin entry also exposes `.webpack()`, `.rspack()` and `.esbuild()` adapters. For non-Next React apps, mount `InlineCMSProvider` only in development/edit builds and supply your own server route adapter for `createHandlers()` (standard Request/Response). Never mount the provider in a normal production bundle.
 
+```js
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import inlineCMS from '@inlinecms/transform/astro';
+export default defineConfig({ integrations: [inlineCMS()] });
 ```
-packages/
-  babel-plugin/
-    src/
-      core/          # Types, config, key generation, content I/O
-      transform/     # Babel plugin (extraction + JSX rewrite)
-      cli/           # CLI commands (extract, audit)
-  react/
-    src/
-      runtime/       # cms(), getCms(), useCms(), InlineCMSProvider
-      editor/        # EditorOverlay, Toolbar, LanguageSwitcher
-      api/           # Next.js API route handlers
-demo/                # Next.js App Router demo app
+
+Astro templates receive locators, and the core edits static text, quoted attributes, literal expressions and frontmatter/data strings. Mount the React editor in a hydrated island on edit deployments and expose Node API handlers through your Astro server adapter.
+
+## AI proposals
+
+```sh
+pnpm add @anthropic-ai/claude-agent-sdk
 ```
+
+Configure the SDK's normal authentication and a model available to your account. Ask AI sends the selected element, source/ancestor locators, current copy, instruction and resolver candidates. Local agents use only scoped virtual source tools; they cannot run shell commands, read excluded files or write the working tree. The returned proposal is signed, expires after one hour and writes only on Publish. Structural content can be added to existing or new included source/data files. Publish or revert existing changes before requesting an agent proposal.
+
+Hosted agents use separate draft PRs and `claude-code-action`, described in [hosting.md](docs/hosting.md). Agent result diffs appear in the pending panel; Publish marks a reviewed draft PR ready for review. It never merges a PR.
+
+## Readiness tools
+
+```sh
+pnpm exec inlinecms doctor --url http://localhost:3000
+pnpm exec inlinecms migrate --content content/content.en.json
+pnpm exec inlinecms migrate --content content/content.en.json --write
+```
+
+Doctor uses optional Playwright (`pnpm add -D playwright`, `pnpm exec playwright install chromium`) to render configured routes. It scores visible text separately from editable attributes, reports each unresolved/ambiguous locator, and exits nonzero below 80% or when no text was measured. Run it on an edit/dev deployment so locators exist.
+
+Migration previews diffs by default. It writes a chosen v1 locale's overrides into source, removes CMS calls, content-version calls, injected attributes and locale props, and updates root Next config imports/requires (JS, MJS, CJS and TS). It handles both build-time extraction and already rewritten JSX. `--write` refuses unmatched keys and removes the selected legacy content file only after successful writes. Review configuration/package dependencies, other locale files and the obsolete manifest manually; these are never silently discarded. Simple provider imports in server layouts are converted to `InlineCMS` automatically. Move providers in client components to a server layout manually to get the production bundle gate.
+
+Use the [agent conventions](agent-kit/AGENTS.md) and [Claude skill](agent-kit/inlinecms/SKILL.md) in projects agents build.
 
 ## Development
 
-```bash
-# Install dependencies
+```sh
 pnpm install
-
-# Build all packages
-pnpm build
-
-# Run tests
 pnpm test
-
-# Run the demo app
+pnpm typecheck
+pnpm build
 pnpm dev
+pnpm --filter demo dev:turbo
 ```
 
-## License
-
-MIT
+The packages are `@inlinecms/core` (Node source pipeline and CLI), `@inlinecms/transform` (build integrations), and `@inlinecms/react` (editor and Node API). The old content-map runtime and Babel extraction package have been removed. See [the v2 plan](specs/plan-v2.md) and [spike evidence](docs/spike-v2.md).

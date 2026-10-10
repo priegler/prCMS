@@ -5,20 +5,21 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "dev:turbo": "next dev --turbopack",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@inlinecms/babel-plugin": "workspace:*",
     "@inlinecms/react": "workspace:*",
     "next": "^15.0.0",
     "react": "^18.0.0",
-    "react-dom": "^18.0.0"
+    "react-dom": "^18.0.0",
+    "@inlinecms/core": "workspace:*",
+    "@inlinecms/transform": "workspace:*"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.0",
     "@types/node": "^22.0.0",
     "@types/react": "^18.0.0",
-    "babel-loader": "^10.1.1",
     "typescript": "^5.5.0"
   }
 }

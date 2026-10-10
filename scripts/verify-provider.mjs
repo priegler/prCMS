@@ -1,0 +1,84 @@
+import { createRequire } from 'node:module';
+import assert from 'node:assert/strict';
+const require = createRequire(new URL('../packages/core/package.json', import.meta.url));
+const { chromium } = require('playwright');
+const base = process.argv[2] ?? 'http://localhost:3311';
+const browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
+try {
+  const page = await browser.newPage();
+  const requests = [], errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  let publishCount = 0, agentFinished = false, agentRequested = false;
+  const candidate = { id: 'original', baseRev: 'original-revision', path: 'app/page.tsx', line: 1, column: 1, raw: 'Your website, in your own words.' };
+  const fresh = { ...candidate, id: 'relocated', baseRev: 'new-revision', line: 2 };
+  await page.route('**/api/cms/**', async route => {
+    const action = new URL(route.request().url()).pathname.split('/').at(-1);
+    const data = route.request().method() === 'POST' ? route.request().postDataJSON() : undefined;
+    requests.push({ action, data });
+    let body, status = 200;
+    if (action === 'auth') body = { authenticated: true, mode: 'github' };
+    else if (action === 'preview') body = { status: 'resolved', candidate: data.candidateId === fresh.id ? fresh : candidate, changes: [{ path: candidate.path, diff: 'Test source diff' }] };
+    else if (action === 'publish') {
+      if (++publishCount === 1) { status = 409; body = { error: 'Choose source again', status: 'ambiguous', edit: data.edits[0], candidates: [fresh, { ...fresh, id: 'other', line: 3 }] }; }
+      else body = { committed: true, commit: 'published', prNumber: 8, branch: 'cms/test-editor', message: 'Test publish complete' };
+    } else if (action === 'agent') { agentRequested = true; body = { hosted: true, committed: true, commit: 'request', prNumber: 7, branch: 'cms/test-agent-placeholder', pr: 'https://example.test/pull/7' }; }
+    else if (action === 'status') body = agentRequested ? { commit: agentFinished ? 'proposal' : 'request', diffs: [{ path: candidate.path, diff: 'Agent diff' }] } : { commit: 'published', state: 'open', ...(publishCount === 2 ? { previewUrl: 'https://preview.example.test' } : {}) };
+    else if (action === 'discard-agent') { agentRequested = false; body = { discarded: true }; }
+    else throw new Error(`Unexpected mock action ${action}`);
+    await route.fulfill({ status, json: body });
+  });
+  await page.goto(base + '/?cms=edit', { waitUntil: 'networkidle' });
+  await page.getByLabel('InlineCMS pending changes').waitFor();
+  await page.clock.install();
+  await page.locator('main > header h1').click();
+  await page.getByRole('button', { name: 'Edit text inline' }).click();
+  await page.locator('main > header h1').fill('Pending browser copy');
+  await page.getByRole('textbox', { name: 'Ask AI', exact: true }).click();
+  await page.getByText('1 pending change', { exact: false }).waitFor();
+  await page.getByRole('button', { name: 'Publish', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Choose source literal' });
+  await picker.waitFor();
+  await picker.getByRole('button').first().click();
+  await picker.waitFor({ state: 'hidden' });
+  assert.equal(requests.filter(r => r.action === 'preview').at(-1).data.candidateId, fresh.id);
+  await page.getByRole('button', { name: 'Publish', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Test publish complete' }).waitFor();
+  assert.equal(requests.filter(r => r.action === 'publish').at(-1).data.edits[0].candidateId, fresh.id);
+  await page.getByRole('link', { name: 'Open preview' }).waitFor();
+  const previewPolls = requests.filter(r => r.action === 'status').length;
+  await page.clock.fastForward(30000); await page.clock.runFor(100);
+  assert.equal(requests.filter(r => r.action === 'status').length, previewPolls);
+  await page.getByRole('textbox', { name: 'Ask AI', exact: true }).fill('Shorten this paragraph');
+  await page.getByRole('button', { name: 'Ask AI', exact: true }).click();
+  await page.getByText('Waiting for agent source proposal', { exact: false }).waitFor();
+  assert(await page.getByRole('button', { name: 'Publish', exact: true }).isDisabled());
+  await page.getByRole('button', { name: 'Edit text inline' }).click();
+  await page.locator('main > header h1').fill('Blocked while waiting');
+  await page.getByRole('textbox', { name: 'Ask AI', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: 'Finish or discard' }).waitFor();
+  assert.equal(requests.filter(r => r.action === 'preview').length, 2);
+  agentFinished = true;
+  await page.clock.fastForward(6000);
+  await page.getByText('Agent source proposal (draft PR)', { exact: false }).waitFor();
+  await page.clock.runFor(100);
+  const agentPolls = requests.filter(r => r.action === 'status').length;
+  await page.clock.fastForward(30000); await page.clock.runFor(100);
+  assert.equal(requests.filter(r => r.action === 'status').length, agentPolls);
+  await page.getByRole('button', { name: 'Revert', exact: true }).click();
+  await page.getByText('0 pending changes', { exact: false }).waitFor();
+  assert(requests.some(r => r.action === 'discard-agent'));
+  await page.getByRole('button', { name: 'Edit text inline' }).click();
+  await page.locator('main > header h1').fill('A second publish');
+  await page.getByRole('textbox', { name: 'Ask AI', exact: true }).click();
+  await page.getByText('1 pending change', { exact: false }).waitFor();
+  const firstStatus = page.waitForResponse(r => r.url().includes('/api/cms/status?pr=8'));
+  await page.getByRole('button', { name: 'Publish', exact: true }).click();
+  await firstStatus; await page.clock.runFor(100);
+  await page.getByRole('button', { name: 'Close editor', exact: true }).click();
+  await page.getByLabel('InlineCMS pending changes').waitFor({ state: 'hidden' });
+  const closedPolls = requests.filter(r => r.action === 'status').length;
+  await page.clock.fastForward(30000); await page.clock.runFor(100);
+  assert.equal(requests.filter(r => r.action === 'status').length, closedPolls);
+  assert.deepEqual(errors, []);
+  console.log(JSON.stringify({ candidateRetry: true, hostedEditIsolation: true, hostedDiscard: true, previewPollingStop: true, closedEditorPollingStop: true, agentPollingBackoff: true, errors }));
+} finally { await browser.close(); }

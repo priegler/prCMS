@@ -1,6 +1,6 @@
 {
   "name": "@inlinecms/react",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "React runtime, editor overlay, and API routes for inline CMS",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,21 +17,30 @@
     "./api": {
       "types": "./dist/api/index.d.ts",
       "import": "./dist/api/index.js"
+    },
+    "./production": {
+      "types": "./dist/production.d.ts",
+      "import": "./dist/production.js"
+    },
+    "./disabled-api": {
+      "types": "./dist/disabled-api.d.ts",
+      "import": "./dist/disabled-api.js"
     }
   },
   "scripts": {
-    "build": "tsup",
+    "build": "rm -rf dist && tsup",
     "test": "vitest run",
     "test:watch": "vitest",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "next": ">=14.0.0",
     "react": ">=18.0.0",
     "react-dom": ">=18.0.0"
   },
   "dependencies": {
-    "@inlinecms/babel-plugin": "workspace:*"
+    "@inlinecms/core": "workspace:*",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

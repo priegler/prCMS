@@ -7,9 +7,10 @@
     "postinstall": "pnpm build",
     "test": "pnpm -r test",
     "dev": "pnpm --filter demo dev",
-    "clean": "pnpm -r clean"
+    "clean": "pnpm -r clean",
+    "typecheck": "pnpm -r typecheck"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19"
   }
 }

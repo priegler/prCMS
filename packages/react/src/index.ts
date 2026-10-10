@@ -1,5 +1,3 @@
-// Client-safe exports (no Node.js dependencies)
-export { InlineCMSProvider, useCms, useCMSContext } from './runtime/provider.js';
-export { getCms, useContentVersion } from './runtime/clientCms.js';
-export { EditorOverlay } from './editor/EditorOverlay.js';
-export { Toolbar } from './editor/Toolbar.js';
+'use client';
+export { InlineCMSProvider, useCMSContext, type InlineCMSProviderProps } from './runtime/provider.js';
+export type { EditRequest, Candidate, PublishResult } from '@inlinecms/core';
