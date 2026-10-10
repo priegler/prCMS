@@ -4,3 +4,7 @@ dist/
 *.tsbuildinfo
 .turbo/
 .env.local
+
+.inlinecms-write.lock
+*.inlinecms-*
+cookies.txt

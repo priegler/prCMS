@@ -3,6 +3,8 @@
 import React, { useCallback, useState } from 'react';
 
 interface LoginDialogProps {
+  apiPath: string;
+  mode: string;
   onSuccess: () => void;
   onCancel: () => void;
 }
@@ -11,7 +13,7 @@ interface LoginDialogProps {
  * Minimal login dialog for CMS admin authentication.
  * Shown when the user tries to enter edit mode without being authenticated.
  */
-export function LoginDialog({ onSuccess, onCancel }: LoginDialogProps) {
+export function LoginDialog({ apiPath, mode, onSuccess, onCancel }: LoginDialogProps) {
   const [secret, setSecret] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -24,7 +26,7 @@ export function LoginDialog({ onSuccess, onCancel }: LoginDialogProps) {
     setError(null);
 
     try {
-      const res = await fetch('/api/cms/auth', {
+      const res = await fetch(`${apiPath}/auth`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ secret }),
@@ -33,39 +35,41 @@ export function LoginDialog({ onSuccess, onCancel }: LoginDialogProps) {
       if (res.ok) {
         onSuccess();
       } else {
-        setError('Invalid secret');
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? 'Sign-in failed');
       }
     } catch {
       setError('Could not connect to auth endpoint');
     } finally {
       setLoading(false);
     }
-  }, [secret, onSuccess]);
+  }, [secret, onSuccess, apiPath]);
 
   return (
-    <div style={backdropStyle} onClick={onCancel}>
+    <div data-inlinecms-ui role="dialog" aria-modal="true" aria-label="InlineCMS login" style={backdropStyle} onClick={onCancel}>
       <form
         style={dialogStyle}
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
       >
         <div style={headerStyle}>InlineCMS Login</div>
-        <input
+        {mode === 'github' ? <a href={`${apiPath}/login`} style={submitButtonStyle}>Sign in with GitHub</a> : <input
           type="password"
           placeholder="Enter CMS secret"
           value={secret}
           onChange={(e) => setSecret(e.target.value)}
           style={inputStyle}
           autoFocus
-        />
+          aria-label="CMS secret"
+        />}
         {error && <div style={errorStyle}>{error}</div>}
         <div style={buttonRowStyle}>
           <button type="button" onClick={onCancel} style={cancelButtonStyle}>
             Cancel
           </button>
-          <button type="submit" disabled={loading || !secret.trim()} style={submitButtonStyle}>
+          {mode !== 'github' && <button type="submit" disabled={loading || !secret.trim()} style={submitButtonStyle}>
             {loading ? 'Logging in...' : 'Login'}
-          </button>
+          </button>}
         </div>
       </form>
     </div>

@@ -1,203 +1,166 @@
 'use client';
-
-import React, { createContext, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import type { ContentMap } from '@inlinecms/babel-plugin';
-import { __updateClientCmsStore } from './clientCms.js';
-
-const EditorOverlay = lazy(() => import('../editor/EditorOverlay.js').then(m => ({ default: m.EditorOverlay })));
+import React, { createContext, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import type { Candidate, EditRequest, FileChange, ElementContext, PublishResult } from '@inlinecms/core';
 import { LoginDialog } from '../editor/LoginDialog.js';
+const EditorOverlay = lazy(() => import('../editor/EditorOverlay.js').then(m => ({ default: m.EditorOverlay })));
 
+export interface PendingChange {
+  id: string; label: string; edit?: EditRequest; changes: Pick<FileChange, 'path' | 'diff'>[];
+  proposalToken?: string; restore?: () => void; waiting?: boolean;
+}
+interface Ambiguity { edit: EditRequest; candidates: Candidate[]; apply?: () => void; restore?: () => void; id: string }
 interface CMSContextValue {
-  /** Current content map for the active locale */
-  content: ContentMap;
-  /** Active locale */
-  locale: string;
-  /** All available locales */
-  locales: string[];
-  /** Whether the editor is active */
-  isEditing: boolean;
-  /** Pending changes not yet saved */
-  dirtyKeys: ContentMap;
-  /** Set a locale */
-  setLocale: (locale: string) => void;
-  /** Toggle edit mode */
-  setEditing: (editing: boolean) => void;
-  /** Register a content change from the editor */
-  setDirty: (key: string, value: string) => void;
-  /** Discard all pending changes */
-  discardChanges: () => void;
-  /** Save all pending changes */
-  saveChanges: () => Promise<void>;
+  apiPath: string; isEditing: boolean; setEditing: (value: boolean) => void;
+  pending: PendingChange[]; busy: boolean; error: string | null; status: PublishResult | null;
+  ambiguity: Ambiguity | null; setAmbiguity: (value: Ambiguity | null) => void;
+  previewEdit: (edit: EditRequest, id: string, apply?: () => void, restore?: () => void) => Promise<boolean>;
+  chooseCandidate: (candidate: Candidate) => Promise<void>;
+  revert: (id: string) => void; publish: () => Promise<void>;
+  askAgent: (context: ElementContext) => Promise<void>;
+  uploadImage: (file: File) => Promise<{ src: string; token: string; change: Pick<FileChange, 'path' | 'diff'> }>;
+  attachImage: (id: string, token: string, change: Pick<FileChange, 'path' | 'diff'>) => void;
 }
-
 const CMSContext = createContext<CMSContextValue | null>(null);
-
-export interface InlineCMSProviderProps {
-  children: React.ReactNode;
-  /** Default locale (defaults to "en") */
-  defaultLocale?: string;
-  /** All available locales (defaults to ["en"]) */
-  locales?: string[];
-}
-
-export function InlineCMSProvider({ children, defaultLocale = 'en', locales = ['en'] }: InlineCMSProviderProps) {
-  const [content, setContent] = useState<ContentMap>({});
-  const [locale, setLocale] = useState(defaultLocale);
-  const [isEditing, setEditing] = useState(false);
-  const [dirtyKeys, setDirtyKeys] = useState<ContentMap>({});
-  const [showLogin, setShowLogin] = useState(false);
-
-  // Fetch content for the active locale
+export interface InlineCMSProviderProps { children: React.ReactNode; apiPath?: string }
+export function InlineCMSProvider({ children, apiPath = '/api/cms' }: InlineCMSProviderProps) {
+  const [isEditing, setEditing] = useState(false), [showLogin, setShowLogin] = useState(false), [mode, setMode] = useState('fs');
+  const [pending, setPending] = useState<PendingChange[]>([]), pendingRef = useRef(pending);
+  pendingRef.current = pending;
+  const [busyCount, setBusyCount] = useState(0), [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<PublishResult | null>(null);
+  const [ambiguity, setAmbiguity] = useState<Ambiguity | null>(null);
+  const jobs = useRef(new Set<Promise<unknown>>());
+  const [agentCommit, setAgentCommit] = useState<string | null>(null);
+  async function post(action: string, data: unknown) {
+    const response = await fetch(`${apiPath}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    const result = await response.json();
+    if (!response.ok) throw Object.assign(new Error(result.error ?? 'CMS request failed'), { result });
+    return result;
+  }
+  const requestEdit = useCallback(async () => {
+    try {
+      const response = await fetch(`${apiPath}/auth`);
+      if (!response.ok) throw new Error('Editor is unavailable in this deployment');
+      const result = await response.json(); setMode(result.mode);
+      if (result.authenticated) setEditing(true); else setShowLogin(true);
+    } catch (e) { setError((e as Error).message); }
+  }, [apiPath]);
   useEffect(() => {
-    fetchContent(locale).then(setContent).catch(console.error);
-  }, [locale]);
-
-  // Attempt to enter edit mode: check auth first, show login if needed
-  const requestEditMode = useCallback(async () => {
-    const authed = await checkAuth();
-    if (authed) {
-      setEditing(true);
-    } else {
-      setShowLogin(true);
-    }
-  }, []);
-
-  // Check for ?cms=edit on mount
+    if (new URLSearchParams(window.location.search).get('cms') === 'edit') void requestEdit();
+  }, [requestEdit]);
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('cms') === 'edit') {
-      requestEditMode();
-    }
-  }, [requestEditMode]);
-
-  // Keyboard shortcut: Ctrl+Shift+E (or Cmd+Shift+E on Mac) to toggle edit mode
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'E') {
-        e.preventDefault();
-        if (isEditing) {
-          setEditing(false);
-        } else {
-          requestEditMode();
-        }
-      }
+    const shortcut = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'e') { e.preventDefault(); if (isEditing) setEditing(false); else void requestEdit(); }
     };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isEditing, requestEditMode]);
-
-  const handleLoginSuccess = useCallback(() => {
-    setShowLogin(false);
-    setEditing(true);
-  }, []);
-
-  const handleLoginCancel = useCallback(() => {
-    setShowLogin(false);
-  }, []);
-
-  const setDirty = useCallback((key: string, value: string) => {
-    setDirtyKeys((prev) => ({ ...prev, [key]: value }));
-  }, []);
-
-  const discardChanges = useCallback(() => {
-    setDirtyKeys({});
-  }, []);
-
-  const saveChanges = useCallback(async () => {
-    if (Object.keys(dirtyKeys).length === 0) return;
-
-    const res = await fetch('/api/cms/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ locale, changes: dirtyKeys }),
+    document.addEventListener('keydown', shortcut); return () => document.removeEventListener('keydown', shortcut);
+  }, [isEditing, requestEdit]);
+  // Poll deployments and agent commits; a PR's new SHA is the completion signal.
+  useEffect(() => {
+    if (!isEditing || !status?.prNumber || status.state === 'closed' || (!agentCommit && status.previewUrl)) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const response = await fetch(`${apiPath}/status?pr=${status.prNumber}&branch=${encodeURIComponent(status.branch ?? '')}`);
+        if (!response.ok) return;
+        const result = await response.json(); if (cancelled) return;
+        setStatus(prev => prev ? { ...prev, ...result } : prev);
+        if (agentCommit && result.commit !== agentCommit) {
+          setPending(prev => [...prev.filter(c => c.id !== 'hosted-agent'), { id: 'hosted-agent', label: 'Agent source proposal (draft PR)', changes: result.diffs }]);
+        }
+      } catch { /* Keep the existing PR link usable while polling is unavailable. */ }
+    };
+    // Keep a reviewed agent diff fresh at a lower rate; normal publishes stop
+    // once the preview is available, and closing the editor cancels all polling.
+    const interval = agentCommit && status.commit !== agentCommit ? 60000 : 5000;
+    void poll(); const timer = setInterval(poll, interval);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [apiPath, isEditing, status?.prNumber, status?.branch, status?.state, status?.previewUrl, status?.commit, agentCommit]);
+  async function work<T>(fn: () => Promise<T>): Promise<T | undefined> {
+    setBusyCount(n => n + 1); setError(null);
+    const job = fn(); jobs.current.add(job);
+    try { return await job; }
+    catch (e) {
+      const result = (e as Error & { result?: { status: string; edit?: EditRequest; candidates: Candidate[] } }).result;
+      if (result?.status === 'ambiguous' && result.edit) {
+        const change = pendingRef.current.find(p => p.edit?.src === result.edit!.src && p.edit?.oldText === result.edit!.oldText && p.edit?.attribute === result.edit!.attribute && p.edit?.textNodeIndex === result.edit!.textNodeIndex);
+        if (change) setAmbiguity({ edit: result.edit, candidates: result.candidates, id: change.id, restore: change.restore });
+      }
+      setError((e as Error).message); return undefined;
+    }
+    finally { jobs.current.delete(job); setBusyCount(n => n - 1); }
+  }
+  async function previewEdit(edit: EditRequest, id: string, apply?: () => void, restore?: () => void) {
+    const existing = pendingRef.current.find(p => p.id === id);
+    const request = existing?.edit ? { ...existing.edit, newText: edit.newText, ...(edit.candidateId ? { candidateId: edit.candidateId, baseRev: edit.baseRev } : {}) } : edit;
+    const result = await work(async () => {
+      if (agentCommit) throw new Error('Finish or discard the hosted agent proposal before editing');
+      const result = await post('preview', request);
+      if (result.status !== 'resolved') {
+        if (result.status === 'ambiguous') setAmbiguity({ edit: request, candidates: result.candidates, apply, restore: existing?.restore ?? restore, id });
+        else setError('No unique source literal found. Use Ask AI for this element.');
+        return false;
+      }
+      const resolvedEdit = { ...request, candidateId: result.candidate.id, baseRev: result.candidate.baseRev };
+      const pendingChange: PendingChange = { id, label: request.attribute ?? 'Text', edit: resolvedEdit, changes: result.changes, restore: existing?.restore ?? restore };
+      setPending(prev => [...prev.filter(p => p.id !== id), pendingChange]);
+      apply?.(); setAmbiguity(null); return true;
     });
-
-    if (res.ok) {
-      const updated = await res.json();
-      setContent(updated.content);
-      setDirtyKeys({});
-    } else {
-      console.error('Failed to save CMS changes:', await res.text());
+    return result ?? false;
+  }
+  async function chooseCandidate(candidate: Candidate) {
+    if (!ambiguity) return;
+    await previewEdit({ ...ambiguity.edit, candidateId: candidate.id, baseRev: candidate.baseRev }, ambiguity.id, ambiguity.apply, ambiguity.restore);
+  }
+  function revert(id: string) {
+    if (id === 'hosted-agent') {
+      void work(async () => { await post('discard-agent', { pr: status?.prNumber, branch: status?.branch }); setAgentCommit(null); setStatus(null); setPending(prev => prev.filter(p => p.id !== id)); });
+      return;
     }
-  }, [dirtyKeys, locale]);
-
-  // Sync the module-level store so getCms() (non-hook) can read current values.
-  __updateClientCmsStore(content, dirtyKeys);
-
-  const value = useMemo<CMSContextValue>(
-    () => ({
-      content,
-      locale,
-      locales,
-      isEditing,
-      dirtyKeys,
-      setLocale,
-      setEditing,
-      setDirty,
-      discardChanges,
-      saveChanges,
-    }),
-    [content, locale, locales, isEditing, dirtyKeys, setDirty, discardChanges, saveChanges],
-  );
-
-  return (
-    <CMSContext.Provider value={value}>
-      {children}
-      {isEditing && (
-        <Suspense fallback={null}>
-          <EditorOverlay />
-        </Suspense>
-      )}
-      {showLogin && (
-        <LoginDialog onSuccess={handleLoginSuccess} onCancel={handleLoginCancel} />
-      )}
-    </CMSContext.Provider>
-  );
-}
-
-/**
- * Hook-based CMS content resolver for client components.
- * Returns the override value (including dirty edits) or the fallback.
- */
-export function useCms(key: string, fallback: string): string {
-  const ctx = useContext(CMSContext);
-  if (!ctx) return fallback;
-
-  // Dirty (unsaved edit) takes priority, then persisted content, then fallback
-  return ctx.dirtyKeys[key] ?? ctx.content[key] ?? fallback;
-}
-
-/**
- * Access the full CMS context (for the editor overlay).
- */
-export function useCMSContext(): CMSContextValue {
-  const ctx = useContext(CMSContext);
-  if (!ctx) {
-    throw new Error('useCMSContext must be used within <InlineCMSProvider>');
+    const sourceId = id.startsWith('image:') ? id.slice('image:'.length) : id;
+    pendingRef.current.find(p => p.id === sourceId)?.restore?.();
+    setPending(prev => prev.filter(p => p.id !== sourceId && p.id !== `image:${sourceId}`));
   }
-  return ctx;
-}
-
-// ─── Internal helpers ───────────────────────────────────────
-
-async function fetchContent(locale: string): Promise<ContentMap> {
-  try {
-    const res = await fetch(`/api/cms/content?locale=${locale}`);
-    if (res.ok) {
-      const data = await res.json();
-      return data.content ?? {};
-    }
-  } catch {
-    // API not available — that's fine in dev without the route set up
+  async function publish() {
+    // Wait for an inline edit's blur preview before taking the publishing snapshot.
+    await Promise.allSettled([...jobs.current]);
+    await work(async () => {
+      const changes = pendingRef.current;
+      if (!changes.length) return;
+      if (changes.some(c => c.id === 'hosted-agent')) {
+        if (changes.length !== 1 || changes[0].waiting) throw new Error('Wait for the agent diff and review it before publishing');
+        const result = await post('approve-agent', { pr: status?.prNumber, commit: status?.commit, branch: status?.branch });
+        setStatus(result); setAgentCommit(null); setPending([]); return;
+      }
+      const result = await post('publish', { edits: changes.flatMap(p => p.edit ? [p.edit] : []), proposals: changes.flatMap(p => p.proposalToken ? [p.proposalToken] : []) });
+      setStatus(result); setPending([]);
+    });
   }
-  return {};
-}
-
-async function checkAuth(): Promise<boolean> {
-  try {
-    const res = await fetch('/api/cms/auth', { method: 'GET' });
-    return res.ok;
-  } catch {
-    return false;
+  async function askAgent(context: ElementContext) {
+    await work(async () => {
+      if (agentCommit || pendingRef.current.length) throw new Error('Publish or revert pending changes before asking AI');
+      const result = await post('agent', context);
+      if (result.hosted) { setStatus(result); setAgentCommit(result.commit); setPending([{ id: 'hosted-agent', label: 'Waiting for agent source proposal', changes: [], waiting: true }]); }
+      else setPending(prev => [...prev, { id: `agent:${Date.now()}`, label: result.message, changes: result.changes, proposalToken: result.proposalToken }]);
+    });
   }
+  async function uploadImage(file: File) {
+    if (agentCommit) throw new Error('Finish or discard the hosted agent proposal before editing');
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = reject; reader.readAsDataURL(file);
+    });
+    const result = await post('image', { base64 });
+    return { src: result.src, token: result.proposalToken, change: result.change };
+  }
+  function attachImage(id: string, token: string, change: Pick<FileChange, 'path' | 'diff'>) {
+    setPending(prev => [...prev.filter(p => p.id !== `image:${id}`), { id: `image:${id}`, label: 'Image upload', changes: [change], proposalToken: token }]);
+  }
+  return <CMSContext.Provider value={{ apiPath, isEditing, setEditing, pending, busy: busyCount > 0, error, status, ambiguity, setAmbiguity, previewEdit, chooseCandidate, revert, publish, askAgent, uploadImage, attachImage }}>
+    {children}
+    {isEditing && <Suspense fallback={null}><EditorOverlay /></Suspense>}
+    {showLogin && <LoginDialog apiPath={apiPath} mode={mode} onSuccess={() => { setShowLogin(false); setEditing(true); }} onCancel={() => setShowLogin(false)} />}
+    {!isEditing && error && <div data-inlinecms-ui role="alert" style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 999999, background: '#fee2e2', padding: 12 }}>{error}</div>}
+  </CMSContext.Provider>;
+}
+export function useCMSContext() {
+  const context = useContext(CMSContext); if (!context) throw new Error('InlineCMSProvider is required'); return context;
 }

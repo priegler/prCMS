@@ -1,1 +1,1 @@
-export { GET, POST } from './handlers.js';
+export { GET, POST, createHandlers, type HandlerOptions } from './handlers.js';
